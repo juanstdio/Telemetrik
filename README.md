@@ -1,8 +1,16 @@
+
 # Telemetrik
 
-Visualizador de Actividad Web
+Visualizador espacial de actividad web en tiempo real
 
-Este proyecto es un backend en FastAPI para generar, distribuir y configurar eventos de partículas, pensado para visualizar actividad web en tiempo real. Incluye una interfaz estática en `/static/index.html`.
+Telemetrik combina un backend FastAPI y una interfaz web interactiva para mostrar la actividad de tu aplicación como una animación espacial. 
+En la pantalla, habrá partículas que representan eventos moviéndose de izquierda a derecha, junto con elementos animados como cometas, asteroides, satélites ASCII y vacas "cowsay" que cruzan el espacio cada tanto diciendo la hora. El fondo estrellado y los efectos visuales hacen que cada evento registrado se convierta en una partícula con color y código propio, permitiendo una experiencia visual atractiva y divertida para monitorear la actividad web.
+
+Este proyecto contiene backend en FastAPI para generar y distribuir eventos en forma de partículas, pensado para visualizar actividad web en tiempo real.
+
+Las partículas recorren la pantalla de izquierda a derecha, e incluyen cometas, satélites, asteroides y vacas locas.
+
+![preview](image.png)
 
 ## Características principales
 - **API REST** para registrar eventos de estado HTTP (200, 404, 500, etc.)
@@ -52,4 +60,4 @@ static/oldindex.html  # Versión estable de la interfaz
 - El servidor se ejecuta con recarga automática (`reload=True`).
 
 ---
-Desarrollado por juanstdio.
+Desarrollado por Juan.
