@@ -13,7 +13,7 @@ Las partículas recorren la pantalla de izquierda a derecha, e incluyen cometas,
 ![preview](image.png)
 
 ## Características principales
-- **API REST** para registrar eventos de estado HTTP (200, 404, 500, etc.)
+- **API REST** para registrar eventos por numero
 - **Configuración dinámica** de códigos de estado y colores asociados
 - **Cola de eventos** en memoria, con endpoint de polling para obtener eventos recientes
 - **Documentación interactiva** disponible en `/docs` (Swagger UI)
