@@ -1,0 +1,382 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Visualizador de Actividad Web</title>
+    <style>
+        body {
+            margin: 0;
+            overflow: hidden; 
+            background-color: #000; /* Fondo negro puro */
+        }
+        #visualizerCanvas {
+            display: block;
+        }
+    </style>
+</head>
+<body>
+
+<canvas id="visualizerCanvas"></canvas>
+
+<script>
+    const canvas = document.getElementById('visualizerCanvas');
+    const ctx = canvas.getContext('2d');
+    
+    // ----------------------------------------------------
+    // CONSTANTES DE DISEÑO
+    // ----------------------------------------------------
+    const TRAIL_LENGTH_MAX = 100;
+    const PARTICLE_SIZE = 3;      
+    const PARTICLE_SPEED = 3;     
+    const TRAIL_WIDTH = 1;        
+    const POLLING_INTERVAL = 500; 
+
+    // ----------------------------------------------------
+    // Variables Globales
+    // ----------------------------------------------------
+    let particles = [];
+    let stars = [];
+    let comets = [];
+    let lastCometTime = Date.now();
+    
+    // Rango de tiempo para el próximo cometa (en milisegundos)
+    const COMET_SPAWN_MIN = 8000;  // 8 segundos
+    const COMET_SPAWN_MAX = 10000; // 10 segundos
+
+    // Ajustar el tamaño del canvas al tamaño de la ventana
+    function resizeCanvas() {
+        canvas.width = window.innerWidth;
+        canvas.height = window.innerHeight;
+    }
+    window.addEventListener('resize', resizeCanvas);
+    resizeCanvas();
+    
+    // Función auxiliar para convertir el nombre del color a RGBA
+    function colorToRgba(colorName, alpha) {
+        switch (colorName.toLowerCase()) {
+            case 'green': return `rgba(0, 255, 0, ${alpha})`;
+            case 'red':   return `rgba(255, 0, 0, ${alpha})`;
+            case 'yellow':return `rgba(255, 255, 0, ${alpha})`;
+            case 'blue':  return `rgba(0, 0, 255, ${alpha})`;
+            default:      return `rgba(255, 255, 255, ${alpha})`; 
+        }
+    }
+
+
+    // ----------------------------------------------------
+    // Objeto Partícula (Evento) - No hay cambios funcionales aquí
+    // ----------------------------------------------------
+    class Particle {
+        constructor(status_code, color) {
+            this.code = status_code;
+            this.color = color; 
+            this.radius = PARTICLE_SIZE;
+            this.trail = []; 
+            this.x = 0;
+            this.y = Math.random() * canvas.height;
+            this.speedX = PARTICLE_SPEED + Math.random() * 1; 
+            this.amplitude = Math.random() * 0.5 + 0.1; 
+            this.frequency = Math.random() * 0.05 + 0.01; 
+            this.verticalDirection = (Math.random() > 0.5) ? 1 : -1; 
+            this.baseY = this.y; 
+            this.noiseOffset = Math.random() * 1000; 
+            this.progress = 0; 
+            this.hazLength = Math.random() * 50 + 10; 
+        }
+
+        update() {
+            this.progress += 1; 
+            this.x += this.speedX;
+            let deltaY = this.verticalDirection * Math.sin(this.progress * this.frequency) * (this.x / canvas.width) * 150; 
+            let noise = Math.sin(this.progress * 0.01 + this.noiseOffset) * 5;
+            this.y = this.baseY + deltaY + noise;
+
+            if (this.y < 0 || this.y > canvas.height) {
+                 this.verticalDirection *= -1; 
+                 this.y = (this.y < 0) ? 1 : canvas.height - 1;
+            }
+
+            this.trail.push({x: this.x, y: this.y});
+            let firstPoint = this.trail[0];
+            if (this.x - firstPoint.x > TRAIL_LENGTH_MAX && this.trail.length > 1) {
+                this.trail.shift(); 
+            }
+            return this.x > canvas.width; 
+        }
+
+        draw() {
+            // Estela (BLANCA y desvaneciéndose)
+            if (this.trail.length > 1) {
+                for (let i = 1; i < this.trail.length; i++) {
+                    const point1 = this.trail[i - 1];
+                    const point2 = this.trail[i];
+                    let opacity = i / this.trail.length; 
+                    ctx.strokeStyle = `rgba(255, 255, 255, ${opacity * 0.4})`; 
+                    ctx.lineWidth = TRAIL_WIDTH;
+                    ctx.beginPath();
+                    ctx.moveTo(point1.x, point1.y);
+                    ctx.lineTo(point2.x, point2.y);
+                    ctx.stroke();
+                }
+            }
+
+            // Haz (SÓLO BLANCO)
+            if (this.x < canvas.width - 50) { 
+                ctx.beginPath();
+                const gradient = ctx.createLinearGradient(this.x, this.y, this.x + this.hazLength, this.y);
+                gradient.addColorStop(0, `rgba(255, 255, 255, 0.9)`); 
+                gradient.addColorStop(1, `rgba(255, 255, 255, 0.0)`); 
+                ctx.strokeStyle = gradient;
+                ctx.lineWidth = this.radius * 0.8; 
+                ctx.lineCap = 'round';
+                ctx.moveTo(this.x + this.radius, this.y);
+                ctx.lineTo(this.x + this.radius + this.hazLength, this.y);
+                ctx.stroke();
+            }
+            
+            // Cuerpo (SÓLO BLANCO)
+            ctx.beginPath();
+            ctx.fillStyle = 'white';
+            ctx.arc(this.x, this.y, this.radius, 0, Math.PI * 2);
+            ctx.fill();
+            
+            // Texto del Código (MANTIENE EL COLOR ORIGINAL)
+            ctx.fillStyle = this.color; 
+            ctx.font = "8px Arial";
+            ctx.fillText(this.code, this.x + 8, this.y + 3);
+        }
+    }
+
+
+    // ----------------------------------------------------
+    // Objeto Cometa (Nuevo)
+    // ----------------------------------------------------
+    class Comet {
+        constructor() {
+            const size = Math.random() * 4 + 2; // Tamaño de 2 a 6
+            this.color = Math.random() > 0.5 ? 'white' : 'red'; // Blanco o Rojo
+            this.size = size;
+            this.speed = Math.random() * 5 + 3; // Velocidad de 3 a 8
+            this.angle = Math.random() * Math.PI * 2; // Ángulo aleatorio 0 a 360 grados
+            this.trailLength = Math.random() * 150 + 50; // Longitud de la cola
+
+            // Posición inicial: elige aleatoriamente uno de los 4 bordes
+            const edge = Math.floor(Math.random() * 4); 
+            
+            switch (edge) {
+                case 0: // Borde izquierdo
+                    this.x = -size;
+                    this.y = Math.random() * canvas.height;
+                    break;
+                case 1: // Borde superior
+                    this.x = Math.random() * canvas.width;
+                    this.y = -size;
+                    break;
+                case 2: // Borde derecho
+                    this.x = canvas.width + size;
+                    this.y = Math.random() * canvas.height;
+                    break;
+                case 3: // Borde inferior
+                    this.x = Math.random() * canvas.width;
+                    this.y = canvas.height + size;
+                    break;
+            }
+
+            this.vx = Math.cos(this.angle) * this.speed;
+            this.vy = Math.sin(this.angle) * this.speed;
+            
+            // Ajustar la dirección para que cruce la pantalla si el ángulo inicial falló
+            // Esto asegura que el cometa no solo viaje fuera de la pantalla inmediatamente.
+            if (edge === 0) this.vx = Math.abs(this.vx); // Siempre a la derecha
+            if (edge === 1) this.vy = Math.abs(this.vy); // Siempre hacia abajo
+            if (edge === 2) this.vx = -Math.abs(this.vx); // Siempre a la izquierda
+            if (edge === 3) this.vy = -Math.abs(this.vy); // Siempre hacia arriba
+            
+            this.trail = [];
+        }
+
+        update() {
+            this.x += this.vx;
+            this.y += this.vy;
+
+            // Mantenemos una cola corta
+            this.trail.push({x: this.x, y: this.y});
+            if (this.trail.length > 5) {
+                 this.trail.shift();
+            }
+
+            // Chequea si salió de la pantalla
+            return this.x < -100 || this.x > canvas.width + 100 || 
+                   this.y < -100 || this.y > canvas.height + 100;
+        }
+
+        draw() {
+            // Dibujar la cola del cometa
+            if (this.trail.length > 1) {
+                ctx.beginPath();
+                // Usa un gradiente para desvanecer la cola rápidamente
+                const gradient = ctx.createLinearGradient(this.trail[0].x, this.trail[0].y, this.x, this.y);
+                gradient.addColorStop(0, colorToRgba(this.color, 0.0));
+                gradient.addColorStop(1, colorToRgba(this.color, 0.8));
+
+                ctx.strokeStyle = gradient;
+                ctx.lineWidth = 1;
+                ctx.moveTo(this.trail[0].x, this.trail[0].y);
+                
+                for (let i = 1; i < this.trail.length; i++) {
+                    ctx.lineTo(this.trail[i].x, this.trail[i].y);
+                }
+                ctx.stroke();
+            }
+            
+            // Dibujar el cuerpo del cometa (forma de estrella/asterisco)
+            ctx.fillStyle = this.color;
+            ctx.save();
+            ctx.translate(this.x, this.y);
+            
+            // Dibuja una simple forma de "X" o "asterisco"
+            const length = this.size * 1.5;
+            ctx.lineWidth = 1.5;
+            ctx.strokeStyle = this.color;
+            
+            ctx.beginPath();
+            ctx.moveTo(-length, 0); ctx.lineTo(length, 0);
+            ctx.moveTo(0, -length); ctx.lineTo(0, length);
+            ctx.stroke();
+
+            ctx.restore();
+        }
+    }
+
+    function spawnCometIfReady() {
+        const now = Date.now();
+        if (now - lastCometTime > COMET_SPAWN_MIN) {
+            // Decidir si generar un cometa basado en la probabilidad
+            const randomThreshold = Math.random() * (COMET_SPAWN_MAX - COMET_SPAWN_MIN) + COMET_SPAWN_MIN;
+            
+            if (now - lastCometTime > randomThreshold) {
+                comets.push(new Comet());
+                lastCometTime = now;
+            }
+        }
+    }
+
+
+    // ----------------------------------------------------
+    // Lógica del Fondo de Estrellas (Velocidad Variable)
+    // ----------------------------------------------------
+    
+    function initStars(numStars) {
+        for (let i = 0; i < numStars; i++) {
+            stars.push({
+                x: Math.random() * canvas.width,
+                y: Math.random() * canvas.height,
+                radius: Math.random() * 1.5,
+                // Velocidad variable para más dinamismo
+                speed: Math.random() * 0.5 + 0.05 // Velocidad de 0.05 a 0.55
+            });
+        }
+    }
+
+    function drawStars() {
+        ctx.fillStyle = 'white';
+        for (let i = 0; i < stars.length; i++) {
+            let star = stars[i];
+            
+            // Mover la estrella con su velocidad individual
+            star.x -= star.speed; 
+            
+            if (star.x < 0) {
+                star.x = canvas.width;
+            }
+            ctx.beginPath();
+            ctx.arc(star.x, star.y, star.radius, 0, Math.PI * 2);
+            ctx.fill();
+        }
+    }
+    
+    // Función de fondo SIMPLE: SÓLO NEGRO
+    function updateBackground() {
+        // Devuelve negro puro.
+        return `rgb(0, 0, 0)`; 
+    }
+    
+    initStars(150); 
+
+    // ----------------------------------------------------
+    // Implementación de POLLING (sin cambios)
+    // ----------------------------------------------------
+
+    function createParticle(status_code, color) {
+        particles.push(new Particle(status_code, color));
+    }
+
+    async function pollForEvents() {
+        const url = "/api/events/poll";
+        try {
+            const response = await fetch(url);
+            if (!response.ok) {
+                throw new Error(`Error HTTP: ${response.status}`);
+            }
+            const data = await response.json();
+            
+            if (data.events && data.events.length > 0) {
+                data.events.forEach(event => {
+                    createParticle(event.status_code, event.color);
+                });
+            }
+        } catch (error) {
+            // Ignorar errores de conexión
+        }
+    }
+
+    pollForEvents(); 
+    setInterval(pollForEvents, POLLING_INTERVAL);
+    
+    // ----------------------------------------------------
+    // Bucle Principal de Renderizado
+    // ----------------------------------------------------
+    function animate() {
+        // Fondo negro puro
+        ctx.fillStyle = updateBackground();
+        ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+        // Generar cometas
+        spawnCometIfReady();
+
+        // Dibujar el fondo de estrellas
+        drawStars();
+
+        // Actualizar y dibujar las partículas de evento
+        for (let i = particles.length - 1; i >= 0; i--) {
+            const particle = particles[i];
+            
+            if (particle.update()) {
+                particles.splice(i, 1);
+            } else {
+                particle.draw();
+            }
+        }
+
+        // Actualizar y dibujar los cometas
+        for (let i = comets.length - 1; i >= 0; i--) {
+            const comet = comets[i];
+            
+            if (comet.update()) {
+                comets.splice(i, 1);
+            } else {
+                comet.draw();
+            }
+        }
+
+        requestAnimationFrame(animate); 
+    }
+
+    // Iniciar el bucle de animación
+    animate();
+    
+</script>
+
+</body>
+</html>

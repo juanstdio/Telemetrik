@@ -1,0 +1,555 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Telemetrik</title>
+    <style>
+        body {
+            margin: 0;
+            overflow: hidden; 
+            background-color: #000;
+            cursor: none;
+        }
+        #visualizerCanvas {
+            display: block;
+        }
+    </style>
+</head>
+<body>
+
+<canvas id="visualizerCanvas"></canvas>
+
+<script>
+    const canvas = document.getElementById('visualizerCanvas');
+    const ctx = canvas.getContext('2d');
+    
+    // ----------------------------------------------------
+    // CONSTANTES DE DISEÑO Y LÍMITES (AJUSTADAS)
+    // ----------------------------------------------------
+    const TRAIL_LENGTH_MAX = 100;
+    const PARTICLE_SIZE = 3;      
+    const PARTICLE_SPEED = 3;     
+    const TRAIL_WIDTH = 1;        
+    const POLLING_INTERVAL = 500; 
+    
+    const MAX_ASTEROIDS = 3;
+    const MAX_SATELLITES = 3;
+    const COW_SPAWN_INTERVAL = 45000;
+    const COMET_SPAWN_MIN = 8000;  
+    const COMET_SPAWN_MAX = 10000; 
+    
+    // LONGITUDES AJUSTADAS (aproximadamente 50px de recorrido)
+    const ASTEROID_TRAIL_LENGTH = 15; // Más largo que 10
+    const SATELLITE_TRAIL_LENGTH = 25; // Más largo que 15
+    const COW_TRAIL_LENGTH = 30; // Más largo que 20
+
+    // ----------------------------------------------------
+    // Variables Globales
+    // ----------------------------------------------------
+    let particles = [];
+    let stars = [];
+    let comets = [];
+    let asteroids = [];
+    let satellites = [];
+    let cows = [];
+    
+    let lastCometTime = Date.now();
+    let lastCowTime = Date.now();
+
+    const ASCII_SATELLITE = [
+        " .-.",
+        " (o_o)",
+        "  | |",
+        " / | \\"
+    ];
+
+    function getCowText(timeString) {
+        const length = timeString.length;
+        const top_border = " " + "_".repeat(length + 2);
+        const bottom_border = " " + "-".repeat(length + 2);
+        
+        return [
+            top_border,
+            `< ${timeString} >`,
+            bottom_border,
+            "        \\   ^__^",
+            "         \\  (oo)\_______",
+            "            (__)\       )\\/\\",
+            "                ||----w |",
+            "                ||     ||"
+        ];
+    }
+
+    function resizeCanvas() {
+        canvas.width = window.innerWidth;
+        canvas.height = window.innerHeight;
+    }
+    window.addEventListener('resize', resizeCanvas);
+    resizeCanvas();
+    
+    function colorToRgba(colorName, alpha) {
+        switch (colorName.toLowerCase()) {
+            case 'green': return `rgba(0, 255, 0, ${alpha})`;
+            case 'red':   return `rgba(255, 0, 0, ${alpha})`;
+            case 'yellow':return `rgba(255, 255, 0, ${alpha})`;
+            case 'blue':  return `rgba(0, 0, 255, ${alpha})`;
+            default:      return `rgba(255, 255, 255, ${alpha})`; 
+        }
+    }
+
+    function initializeCrossingObject(size, minSpeed, maxSpeed) {
+        const speed = Math.random() * (maxSpeed - minSpeed) + minSpeed;
+        let angle = Math.random() * Math.PI * 2;
+        let x, y;
+        let vx = Math.cos(angle) * speed;
+        let vy = Math.sin(angle) * speed;
+
+        const edge = Math.floor(Math.random() * 4); 
+        
+        switch (edge) {
+            case 0: x = -size; y = Math.random() * canvas.height; break;
+            case 1: x = Math.random() * canvas.width; y = -size; break;
+            case 2: x = canvas.width + size; y = Math.random() * canvas.height; break;
+            case 3: x = Math.random() * canvas.width; y = canvas.height + size; break;
+        }
+
+        if (edge === 0 && vx < 0) vx *= -1;
+        if (edge === 1 && vy < 0) vy *= -1;
+        if (edge === 2 && vx > 0) vx *= -1;
+        if (edge === 3 && vy > 0) vy *= -1;
+        
+        if (Math.abs(vx) < 0.5 && (edge === 0 || edge === 2)) vx = (edge === 0 ? speed : -speed);
+        if (Math.abs(vy) < 0.5 && (edge === 1 || edge === 3)) vy = (edge === 1 ? speed : -speed);
+
+        return { x, y, vx, vy, angle: 0 };
+    }
+
+    // ----------------------------------------------------
+    // CLASES DE OBJETOS (con estelas ajustadas)
+    // ----------------------------------------------------
+    
+    // Función de Dibujo de Estela (Reutilizable)
+    function drawTrail(obj, max_length) {
+        if (obj.trail.length > 1) {
+            for (let i = 1; i < obj.trail.length; i++) {
+                const point1 = obj.trail[i - 1];
+                const point2 = obj.trail[i];
+                
+                // La opacidad es 0 al inicio de la estela y 1 cerca del objeto.
+                let opacity = i / obj.trail.length; 
+                
+                // Color y ancho de la estela
+                // Se usa 0.3 como opacidad máxima para que se vea como una "sombra" desvanecida
+                ctx.strokeStyle = colorToRgba(obj.color, opacity * 0.3); 
+                ctx.lineWidth = 1; 
+
+                ctx.beginPath();
+                ctx.moveTo(point1.x, point1.y);
+                ctx.lineTo(point2.x, point2.y);
+                ctx.stroke();
+            }
+        }
+    }
+
+    // Clase: Partícula (Evento) - ... (Sin cambios significativos en lógica de estela)
+    class Particle {
+        constructor(status_code, color) {
+            this.code = status_code;
+            this.color = color; 
+            this.radius = PARTICLE_SIZE;
+            this.trail = []; 
+            this.x = 0;
+            this.y = Math.random() * canvas.height;
+            this.speedX = PARTICLE_SPEED + Math.random() * 1; 
+            this.amplitude = Math.random() * 0.5 + 0.1; 
+            this.frequency = Math.random() * 0.05 + 0.01; 
+            this.verticalDirection = (Math.random() > 0.5) ? 1 : -1; 
+            this.baseY = this.y; 
+            this.noiseOffset = Math.random() * 1000; 
+            this.progress = 0; 
+            this.hazLength = Math.random() * 50 + 10; 
+        }
+        update() {
+            this.progress += 1; 
+            this.x += this.speedX;
+            let deltaY = this.verticalDirection * Math.sin(this.progress * this.frequency) * (this.x / canvas.width) * 150; 
+            let noise = Math.sin(this.progress * 0.01 + this.noiseOffset) * 5;
+            this.y = this.baseY + deltaY + noise;
+            if (this.y < 0 || this.y > canvas.height) {
+                 this.verticalDirection *= -1; 
+                 this.y = (this.y < 0) ? 1 : canvas.height - 1;
+            }
+            this.trail.push({x: this.x, y: this.y});
+            let firstPoint = this.trail[0];
+            if (this.x - firstPoint.x > TRAIL_LENGTH_MAX && this.trail.length > 1) {
+                this.trail.shift(); 
+            }
+            return this.x > canvas.width; 
+        }
+        draw() {
+            if (this.trail.length > 1) {
+                for (let i = 1; i < this.trail.length; i++) {
+                    const point1 = this.trail[i - 1];
+                    const point2 = this.trail[i];
+                    let opacity = i / this.trail.length; 
+                    ctx.strokeStyle = `rgba(255, 255, 255, ${opacity * 0.4})`; 
+                    ctx.lineWidth = TRAIL_WIDTH;
+                    ctx.beginPath();
+                    ctx.moveTo(point1.x, point1.y);
+                    ctx.lineTo(point2.x, point2.y);
+                    ctx.stroke();
+                }
+            }
+            if (this.x < canvas.width - 50) { 
+                ctx.beginPath();
+                const gradient = ctx.createLinearGradient(this.x, this.y, this.x + this.hazLength, this.y);
+                gradient.addColorStop(0, `rgba(255, 255, 255, 0.9)`); 
+                gradient.addColorStop(1, `rgba(255, 255, 255, 0.0)`); 
+                ctx.strokeStyle = gradient;
+                ctx.lineWidth = this.radius * 0.8; 
+                ctx.lineCap = 'round';
+                ctx.moveTo(this.x + this.radius, this.y);
+                ctx.lineTo(this.x + this.radius + this.hazLength, this.y);
+                ctx.stroke();
+            }
+            ctx.beginPath();
+            ctx.fillStyle = 'white';
+            ctx.arc(this.x, this.y, this.radius, 0, Math.PI * 2);
+            ctx.fill();
+            ctx.fillStyle = this.color; 
+            ctx.font = "8px Arial";
+            ctx.fillText(this.code, this.x + 8, this.y + 3);
+        }
+    }
+    
+    // Clase: Cometa
+    class Comet {
+        constructor() {
+            const size = Math.random() * 4 + 2; 
+            this.color = Math.random() > 0.5 ? 'white' : 'red'; 
+            this.size = size;
+            // Ajuste aquí: Aumentamos la longitud del array de estela
+            this.trailLength = 20; 
+            const { x, y, vx, vy, angle } = initializeCrossingObject(size * 10, 3, 8);
+            this.x = x; this.y = y; this.vx = vx; this.vy = vy; this.angle = angle;
+            this.trail = []; 
+        }
+
+        update() {
+            this.x += this.vx;
+            this.y += this.vy;
+            this.trail.push({x: this.x, y: this.y}); 
+            if (this.trail.length > this.trailLength) { this.trail.shift(); } 
+            return this.x < -100 || this.x > canvas.width + 100 || 
+                   this.y < -100 || this.y > canvas.height + 100;
+        }
+
+        draw() {
+            drawTrail(this, this.trailLength);
+            
+            ctx.fillStyle = this.color;
+            ctx.save();
+            ctx.translate(this.x, this.y);
+            const length = this.size * 1.5;
+            ctx.lineWidth = 1.5;
+            ctx.strokeStyle = this.color;
+            ctx.beginPath();
+            ctx.moveTo(-length, 0); ctx.lineTo(length, 0);
+            ctx.moveTo(0, -length); ctx.lineTo(0, length);
+            ctx.stroke();
+            ctx.restore();
+        }
+    }
+    
+    // Clase: Asteroide
+    class Asteroid {
+        constructor() {
+            this.size = Math.random() * 1.5 + 1.5;
+            this.color = 'gray';
+            this.rotationSpeed = (Math.random() * 0.05 + 0.005) * (Math.random() > 0.5 ? 1 : -1);
+            this.trailLength = ASTEROID_TRAIL_LENGTH; // <-- Usa la constante ajustada
+            
+            const { x, y, vx, vy, angle } = initializeCrossingObject(this.size * 20, 1, 3);
+            this.x = x; this.y = y; this.vx = vx; this.vy = vy; this.angle = angle;
+            this.trail = []; 
+        }
+
+        update() {
+            this.x += this.vx;
+            this.y += this.vy;
+            this.angle += this.rotationSpeed;
+            this.trail.push({x: this.x, y: this.y}); 
+            if (this.trail.length > this.trailLength) { this.trail.shift(); } 
+            return this.x < -100 || this.x > canvas.width + 100 || 
+                   this.y < -100 || this.y > canvas.height + 100;
+        }
+
+        draw() {
+            drawTrail(this, this.trailLength);
+            
+            ctx.save();
+            ctx.translate(this.x, this.y);
+            ctx.rotate(this.angle);
+            ctx.fillStyle = this.color;
+            ctx.font = `${this.size * 10}px monospace`;
+            ctx.fillText('@', -5, 5);
+            ctx.restore();
+        }
+    }
+    
+    // Clase: Satélite
+    class Satellite {
+        constructor() {
+            this.ascii = ASCII_SATELLITE;
+            this.height = this.ascii.length * 10;
+            this.width = this.ascii[0].length * 6;
+            this.color = 'cyan';
+            this.rotationSpeed = (Math.random() * 0.02 + 0.002) * (Math.random() > 0.5 ? 1 : -1);
+            this.trailLength = SATELLITE_TRAIL_LENGTH; // <-- Usa la constante ajustada
+            
+            const { x, y, vx, vy, angle } = initializeCrossingObject(Math.max(this.width, this.height), 1, 2);
+            this.x = x; this.y = y; this.vx = vx; this.vy = vy; this.angle = angle;
+            this.trail = []; 
+        }
+
+        update() {
+            this.x += this.vx;
+            this.y += this.vy;
+            this.angle += this.rotationSpeed;
+            this.trail.push({x: this.x, y: this.y}); 
+            if (this.trail.length > this.trailLength) { this.trail.shift(); } 
+            return this.x < -150 || this.x > canvas.width + 150 || 
+                   this.y < -150 || this.y > canvas.height + 150;
+        }
+
+        draw() {
+            drawTrail(this, this.trailLength);
+            
+            ctx.save();
+            ctx.translate(this.x, this.y);
+            ctx.rotate(this.angle);
+            ctx.fillStyle = this.color;
+            ctx.font = '10px monospace';
+            
+            this.ascii.forEach((line, index) => {
+                ctx.fillText(line, 0, index * 10 - this.height / 2);
+            });
+            ctx.restore();
+        }
+    }
+
+    // Clase: Vaca Cowsay
+    class Cow {
+        constructor() {
+            const now = new Date();
+            const timeString = `${now.getHours().toString().padStart(2, '0')}:${now.getMinutes().toString().padStart(2, '0')}:${now.getSeconds().toString().padStart(2, '0')}`;
+            this.ascii = getCowText(timeString);
+            
+            this.height = this.ascii.length * 12;
+            this.width = this.ascii[3].length * 6; 
+            this.color = 'white';
+            this.rotationSpeed = (Math.random() * 0.01 + 0.001) * (Math.random() > 0.5 ? 1 : -1);
+            this.trailLength = COW_TRAIL_LENGTH; // <-- Usa la constante ajustada
+            
+            const { x, y, vx, vy, angle } = initializeCrossingObject(Math.max(this.width, this.height), 0.5, 1.5);
+            this.x = x; this.y = y; this.vx = vx; this.vy = vy; this.angle = angle;
+            this.trail = []; 
+        }
+
+        update() {
+            this.x += this.vx;
+            this.y += this.vy;
+            this.angle += this.rotationSpeed;
+            this.trail.push({x: this.x, y: this.y}); 
+            if (this.trail.length > this.trailLength) { this.trail.shift(); } 
+            return this.x < -300 || this.x > canvas.width + 300 || 
+                   this.y < -300 || this.y > canvas.height + 300;
+        }
+
+        draw() {
+            drawTrail(this, this.trailLength);
+            
+            ctx.save();
+            ctx.translate(this.x, this.y);
+            ctx.rotate(this.angle);
+            ctx.fillStyle = this.color;
+            ctx.font = '12px monospace';
+            
+            this.ascii.forEach((line, index) => {
+                ctx.fillText(line, 0, index * 12 - this.height / 2);
+            });
+            ctx.restore();
+        }
+    }
+
+
+    // ----------------------------------------------------
+    // LÓGICA DE APARICIÓN 
+    // ----------------------------------------------------
+
+    function spawnCometIfReady() {
+        const now = Date.now();
+        if (now - lastCometTime > COMET_SPAWN_MIN) {
+            const randomThreshold = Math.random() * (COMET_SPAWN_MAX - COMET_SPAWN_MIN) + COMET_SPAWN_MIN;
+            if (now - lastCometTime > randomThreshold) {
+                comets.push(new Comet());
+                lastCometTime = now;
+            }
+        }
+    }
+
+    function spawnAsteroidIfReady() {
+        if (asteroids.length < MAX_ASTEROIDS && Math.random() < 0.005) {
+            asteroids.push(new Asteroid());
+        }
+    }
+
+    function spawnSatelliteIfReady() {
+        if (satellites.length < MAX_SATELLITES && Math.random() < 0.002) {
+            satellites.push(new Satellite());
+        }
+    }
+    
+    function spawnCowIfReady() {
+        const now = Date.now();
+        if (now - lastCowTime > COW_SPAWN_INTERVAL) {
+            cows.push(new Cow());
+            lastCowTime = now;
+        }
+    }
+    
+    // ----------------------------------------------------
+    // Funciones de Fondo (Estrellas y Color)
+    // ----------------------------------------------------
+    
+    function initStars(numStars) {
+        for (let i = 0; i < numStars; i++) {
+            stars.push({
+                x: Math.random() * canvas.width,
+                y: Math.random() * canvas.height,
+                radius: Math.random() * 1.5,
+                speed: Math.random() * 0.5 + 0.05
+            });
+        }
+    }
+
+    function drawStars() {
+        ctx.fillStyle = 'white';
+        for (let i = 0; i < stars.length; i++) {
+            let star = stars[i];
+            star.x -= star.speed; 
+            if (star.x < 0) {
+                star.x = canvas.width;
+            }
+            ctx.beginPath();
+            ctx.arc(star.x, star.y, star.radius, 0, Math.PI * 2);
+            ctx.fill();
+        }
+    }
+    
+    function updateBackground() {
+        return `rgb(0, 0, 0)`; 
+    }
+    
+    initStars(150); 
+
+    // ----------------------------------------------------
+    // Implementación de POLLING (actualizaciones en vivo)
+    // ----------------------------------------------------
+
+    function createParticle(status_code, color) {
+        particles.push(new Particle(status_code, color));
+    }
+
+    async function pollForEvents() {
+        const url = "/api/events/poll";
+        try {
+            const response = await fetch(url);
+            if (!response.ok) {
+                throw new Error(`Error HTTP: ${response.status}`);
+            }
+            const data = await response.json();
+            
+            if (data.events && data.events.length > 0) {
+                data.events.forEach(event => {
+                    createParticle(event.status_code, event.color);
+                });
+            }
+        } catch (error) {
+            // Ignorar errores de conexión
+        }
+    }
+
+    pollForEvents(); 
+    setInterval(pollForEvents, POLLING_INTERVAL);
+    
+    // ----------------------------------------------------
+    // Bucle Principal de Renderizado
+    // ----------------------------------------------------
+    function animate() {
+        ctx.fillStyle = updateBackground();
+        ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+        spawnCometIfReady();
+        spawnAsteroidIfReady();
+        spawnSatelliteIfReady();
+        spawnCowIfReady();
+
+        drawStars();
+
+        // 1. Partículas (Eventos)
+        for (let i = particles.length - 1; i >= 0; i--) {
+            if (particles[i].update()) {
+                particles.splice(i, 1);
+            } else {
+                particles[i].draw();
+            }
+        }
+
+        // 2. Cometas
+        for (let i = comets.length - 1; i >= 0; i--) {
+            if (comets[i].update()) {
+                comets.splice(i, 1);
+            } else {
+                comets[i].draw();
+            }
+        }
+        
+        // 3. Asteroides
+        for (let i = asteroids.length - 1; i >= 0; i--) {
+            if (asteroids[i].update()) {
+                asteroids.splice(i, 1);
+            } else {
+                asteroids[i].draw();
+            }
+        }
+
+        // 4. Satélites
+        for (let i = satellites.length - 1; i >= 0; i--) {
+            if (satellites[i].update()) {
+                satellites.splice(i, 1);
+            } else {
+                satellites[i].draw();
+            }
+        }
+        
+        // 5. Vacas
+        for (let i = cows.length - 1; i >= 0; i--) {
+            if (cows[i].update()) {
+                cows.splice(i, 1);
+            } else {
+                cows[i].draw();
+            }
+        }
+
+        requestAnimationFrame(animate); 
+    }
+
+    // Iniciar el bucle de animación
+    animate();
+    
+</script>
+
+</body>
+</html>
