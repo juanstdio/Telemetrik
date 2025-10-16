@@ -65,7 +65,7 @@ async def root():
     """Redirige la ruta raíz al visualizador estático."""
     return RedirectResponse(url="/static/index.html")
 
-# Endpoint original para generar eventos (ahora usa la configuración actualizada)
+# Endpoint original para generar eventos 
 @app.get("/api/{status_code}")
 async def generate_event(status_code: int):
     """
@@ -113,7 +113,7 @@ async def add_custom_code(config: CodeConfig):
     }
 
 # ----------------------------------------------------
-# Endpoint de Polling (sin cambios funcionales)
+# Endpoint de Polling
 # ----------------------------------------------------
 
 @app.get("/api/events/poll")
@@ -137,9 +137,7 @@ async def poll_events():
 # ----------------------------------------------------
 
 if __name__ == "__main__":
-    print("Servidor inicializado. Accede a http://127.0.0.1:8000/")
-    print("Accede a la documentación interactiva (Swagger UI) en: http://127.0.0.1:8000/docs")
-    print("\nEndpoints para probar:")
+    print("Accede a la documentación interactiva (Swagger UI) en: /docs")
     print("  - Partícula Verde (200): http://127.0.0.1:8000/api/200")
     print("  - Configurar nuevo código: POST http://127.0.0.1:8000/api/config/add_code")
 
